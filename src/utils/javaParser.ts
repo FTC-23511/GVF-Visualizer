@@ -1,4 +1,5 @@
 import type { Point, Line } from "../types";
+import { getRandomColor } from "./draw";
 
 /**
  * Extracts Pose2d data from a string.
@@ -262,11 +263,4 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
   }
 }
 
-function getRandomColor() {
-  var letters = "56789ABCD";
-  var color = "#";
-  for (var i = 0; i < 6; i++) {
-    color += letters[Math.floor(Math.random() * letters.length)];
-  }
-  return color;
-}
+
