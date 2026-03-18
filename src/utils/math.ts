@@ -144,3 +144,4 @@ export function getHermitePoint(t: number, p0: BasePoint, h0: number, p1: BasePo
     y: c5.y * t5 + c4.y * t4 + c3.y * t3 + c2.y * t2 + c1.y * t + c0.y
   };
 }
+
