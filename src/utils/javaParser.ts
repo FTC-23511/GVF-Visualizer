@@ -2,21 +2,43 @@ import type { Point, Line } from "../types";
 
 /**
  * Extracts Pose2d data from a string.
+ * Supports:
+ * - new Pose2d(x, y, Math.toRadians(deg))
+ * - new Pose2d(x, y, deg)
+ * - new Pose2d(x, y, new Rotation2d(deg))
  */
 function extractPose2d(str: string): { x: number; y: number; deg: number } | null {
   if (!str) return null;
-  // Improved number regex: supports .5, -1.2, 1e-3, etc.
-  const num = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/.source;
-  const poseRegex = new RegExp(`new\\s+Pose2d\\s*\\(\\s*(${num})\\s*,\\s*(${num})\\s*,\\s*(?:Math\\.toRadians\\s*\\(\\s*(${num})\\s*\\)|(${num}))\\s*\\)`, "i");
   
+  // A number regex that handles decimals, signs, and scientific notation
+  const num = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/.source;
+  
+  // 1. Try to find the X, Y, and Heading arguments
+  // We match "new Pose2d(" then anything that looks like 3 arguments
+  const poseRegex = /new\s+Pose2d\s*\(([\s\S]*?)\)/i;
   const match = str.match(poseRegex);
   if (!match) return null;
+
+  const inner = match[1];
+  const args = splitArgs(inner);
+  if (args.length < 2) return null;
+
+  const xPart = args[0];
+  const yPart = args[1];
+  const hPart = args.length >= 3 ? args[2] : "0";
+
+  // Try to parse X and Y as floats. If they are variables/expressions, this might fail (return NaN)
+  const x = parseFloat(xPart.match(/[-+]?\d+\.?\d*/)?.[0] || "0");
+  const y = parseFloat(yPart.match(/[-+]?\d+\.?\d*/)?.[0] || "0");
   
-  return {
-    x: parseFloat(match[1]),
-    y: parseFloat(match[2]),
-    deg: parseFloat(match[3] || match[4])
-  };
+  // Try to find a degree/radian value in the 3rd arg
+  let deg = 0;
+  const degMatch = hPart.match(new RegExp(num));
+  if (degMatch) {
+      deg = parseFloat(degMatch[0]);
+  }
+
+  return { x, y, deg };
 }
 
 /**
