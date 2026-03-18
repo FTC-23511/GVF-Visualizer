@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html class="h-full w-full" lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1758068071" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.ico?v=1758068071" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon.ico?v=1758068071" />
+    <link rel="apple-touch-icon" href="/favicon.ico?v=1758068071" />
+    <title>SolversLib Visualizer</title>
+  </head>
+  <body
+    class="h-full w-full bg-neutral-100 font-poppins dark:bg-neutral-950 dark:text-white"
+  >
+    <script type="module" src="/src/main.ts"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("sw.js").then(
+          (registration) => {
+            console.log("Service worker registration successful:", registration);
+          },
+          (error) => {
+            if (String(error).includes('StackBlitz')) {
+              console.info('Service workers are not supported in StackBlitz environment - this is expected behavior');
+            } else {
+              console.error(`Service worker registration failed: ${error}`);
+            }
+          },
+        );
+      } else {
+        console.error("Service workers are not supported.");
+      }
+    </script>
+  </body>
+</html>
