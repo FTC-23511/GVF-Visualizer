@@ -1,6 +1,7 @@
 export * from "./draw";
 export * from "./math";
 export * from "./javaParser";
+export * from "./javaGenerator";
 
 export const DPI = 96 / 5;
 
