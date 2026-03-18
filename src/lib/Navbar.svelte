@@ -52,6 +52,11 @@
   }
 
   function importJavaCode() {
+    if (javaCodeInput.includes("public class") && !javaCodeInput.includes("getPath")) {
+      alert("It looks like you're pasting a Java class definition (library code). Please paste a path definition instead (e.g., from your Trajectory class).");
+      return;
+    }
+    
     const result = parseJavaCode(javaCodeInput);
     if (result) {
       startPoint = result.startPoint;
@@ -59,7 +64,7 @@
       importDialogOpen = false;
       javaCodeInput = "";
     } else {
-      alert("Failed to parse Java code. Please ensure it contains Pose2d declarations.");
+      alert("Failed to parse Java code. Please ensure it contains 'new SplineClass(start, end)' or 'new Pose2d(x, y, deg)' calls.");
     }
   }
 </script>
