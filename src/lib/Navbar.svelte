@@ -52,8 +52,10 @@
   }
 
   function importJavaCode() {
-    if (javaCodeInput.includes("public class") && !javaCodeInput.includes("getPath")) {
-      alert("It looks like you're pasting a Java class definition (library code). Please paste a path definition instead (e.g., from your Trajectory class).");
+    // Robust check for library code (class definitions) vs trajectory code
+    if (javaCodeInput.toLowerCase().includes("public class") && !javaCodeInput.toLowerCase().includes("getpath")) {
+      console.warn("Detected a library class definition, not a trajectory path.");
+      alert("It looks like you're pasting a Line/Spline implementation class (library code), not the code that defines your path.\n\nThe visualizer needs the code that DEFINES your path (e.g., your Trajectory class with 'splines.add(...)'), not the code that defines how splines work. Please paste the code that instantiates and adds splines to a list.");
       return;
     }
     
@@ -64,7 +66,7 @@
       importDialogOpen = false;
       javaCodeInput = "";
     } else {
-      alert("Failed to parse Java code. Please ensure it contains 'new SplineClass(start, end)' or 'new Pose2d(x, y, deg)' calls.");
+      alert("Failed to parse Java code.\n\nMake sure your snippet contains actual path data like:\n'new Pose2d(10, 20, 90)'\nor\n'new LinearSpline(start, end)'");
     }
   }
 </script>
