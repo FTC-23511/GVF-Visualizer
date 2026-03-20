@@ -86,33 +86,32 @@ function splitArgs(str: string): string[] {
 }
 
 export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Line[] } | null {
-    console.log("Variable Tracking Parser: Starting...");
+    console.log("GVF Path Parser: Starting...");
     try {
-        // Strip comments
+        // 1. Pre-process: Strip comments and keep track of line numbers for debugging
         javaCode = javaCode.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
 
-        if (javaCode.includes("public class") && !javaCode.includes("getPath")) {
-            console.warn("Detected a library class definition, not a trajectory path.");
-        }
-        
-        const lines: Line[] = [];
         let startPoint: Point | null = null;
+        const lines: Line[] = [];
         
-        // Track Pose2d variables
+        // Track variables
         const poseVars = new Map<string, { x: number, y: number, deg: number }>();
+        const pathVars = new Map<string, { lastPose: { x: number, y: number, deg: number } }>();
 
-        // 1. Split code into lines/statements to process sequentially
-        // We use a more careful split that doesn't break inside Pose2d or Spline constructors
+        // 2. Tokenize into statements. We need to handle the fluent API where a statement
+        // might span multiple lines (e.g., path = new Path().addPoint().addPoint();)
         const statements: string[] = [];
         let currentStmt = "";
         let parenDepth = 0;
+        
         for (let i = 0; i < javaCode.length; i++) {
             const char = javaCode[i];
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
             
+            // Treat semicolons as statement ends, but also handle blocks for context
             if ((char === ';' || char === '{' || char === '}') && parenDepth === 0) {
-                statements.push(currentStmt.trim());
+                if (currentStmt.trim()) statements.push(currentStmt.trim());
                 currentStmt = "";
             } else {
                 currentStmt += char;
@@ -120,147 +119,169 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
         }
         if (currentStmt.trim()) statements.push(currentStmt.trim());
 
-        statements.forEach((stmt, idx) => {
-            stmt = stmt.trim();
-            if (!stmt) return;
-            
-            // 1. Look for Pose2d assignments: [Pose2d] name = new Pose2d(...)
-            const newPoseMatch = stmt.match(/(?:Pose2d\s+)?(\w+)\s*=\s*(new\s+Pose2d\s*\(.*?\))/i);
-            if (newPoseMatch) {
-                const varName = newPoseMatch[1];
-                const poseData = extractPose2d(newPoseMatch[2]);
-                if (poseData) {
-                    console.log(`Variable Track (New): ${varName} = (${poseData.x}, ${poseData.y}, ${poseData.deg})`);
-                    poseVars.set(varName, poseData);
+        // 3. Process each statement
+        statements.forEach((stmt) => {
+            // A. Pose2d Variable Assignments
+            // e.g., Pose2d start = new Pose2d(0, 0, 0);
+            const poseAssignMatch = stmt.match(/(?:Pose2d\s+)?(\w+)\s*=\s*(new\s+Pose2d\s*\(.*?\))/i);
+            if (poseAssignMatch) {
+                const varName = poseAssignMatch[1];
+                const data = extractPose2d(poseAssignMatch[2]);
+                if (data) {
+                    poseVars.set(varName, data);
+                    console.log(`Pose Var: ${varName} = (${data.x}, ${data.y}, ${data.deg})`);
                 }
                 return;
             }
 
-            // 2. Look for Variable-to-Variable assignments: [Pose2d] name1 = name2
-            const varToVarMatch = stmt.match(/(?:Pose2d\s+)?(\w+)\s*=\s*(\w+)/i);
-            if (varToVarMatch) {
-                const targetVar = varToVarMatch[1];
-                const sourceVar = varToVarMatch[2];
-                if (poseVars.has(sourceVar)) {
-                    const poseData = poseVars.get(sourceVar)!;
-                    console.log(`Variable Track (Copy): ${targetVar} = ${sourceVar} (${poseData.x}, ${poseData.y}, ${poseData.deg})`);
-                    poseVars.set(targetVar, poseData);
-                }
-                return;
-            }
-
-            // Look for Spline additions: [splines.add(] new ...Spline(...)
-            // We search for the "new ...Spline(" pattern regardless of where it appears in the statement
-            const splineStartRegex = /new\s+(\w+Spline)\s*\(/gi;
-            let m;
-            while ((m = splineStartRegex.exec(stmt)) !== null) {
-                const splineClass = m[1];
-                const openParenIndex = m.index + m[0].length - 1;
-                const closeParenIndex = findClosingParen(stmt, openParenIndex);
+            // B. Path Builder Initialization
+            // e.g., path = new Path(startPose)
+            const pathMatch = stmt.match(/(?:Path\s+)?(\w+)\s*=\s*new\s+Path\s*\((.*?)\)/i);
+            if (pathMatch) {
+                const varName = pathMatch[1];
+                const startArg = pathMatch[2].trim();
+                const startData = extractPose2d(startArg) || poseVars.get(startArg);
                 
-                if (openParenIndex !== -1 && closeParenIndex !== -1) {
-                    const innerContent = stmt.substring(openParenIndex + 1, closeParenIndex);
-                    const args = splitArgs(innerContent);
+                if (startData) {
+                    pathVars.set(varName, { lastPose: startData });
+                    if (!startPoint) {
+                        startPoint = {
+                            x: startData.x,
+                            y: startData.y,
+                            heading: "linear",
+                            startDeg: startData.deg,
+                            endDeg: startData.deg
+                        };
+                    }
+                    console.log(`Path Var Started: ${varName} at (${startData.x}, ${startData.y}, ${startData.deg})`);
+                }
+                
+                // Continue to check for chained calls in the same statement
+                // e.g., path = new Path(start).addPoint(...)
+            }
+
+            // C. Path Method Calls (Fluent API)
+            // We look for .addPoint, .addLinearPoint, .addTangentialPoint
+            // We also handle cases like splines.add(new LinearSpline(last, end))
+            
+            // First, find which path variable or if it's an anonymous new Path()
+            const pathVarMatch = stmt.match(/^(\w+)\s*[=.]/);
+            const activePathVar = pathVarMatch ? pathVarMatch[1] : null;
+
+            // Pattern for .addPoint(new Pose2d(...)) or .addPoint(someVar)
+            const addPointRegex = /\.(addPoint|addLinearPoint|addTangentialPoint)\s*\((.*?)\)/gi;
+            let m;
+            while ((m = addPointRegex.exec(stmt)) !== null) {
+                const method = m[1];
+                const arg = m[2].trim();
+                const endData = extractPose2d(arg) || poseVars.get(arg);
+                
+                if (endData) {
+                    const pathCtx = activePathVar ? pathVars.get(activePathVar) : null;
+                    const lastLine = lines[lines.length - 1];
+                    const prevPose = pathCtx ? pathCtx.lastPose : (lastLine ? { x: lastLine.endPoint.x, y: lastLine.endPoint.y, deg: lastLine.endPoint.endDeg } : (startPoint ? { x: startPoint.x, y: startPoint.y, deg: startPoint.startDeg } : null));
                     
-                    if (args.length >= 2) {
-                        const startArg = args[0];
-                        const endArg = args[args.length - 1];
+                    if (prevPose) {
+                        const type = method === "addLinearPoint" ? "linear" : "tangential";
+                        const splineClass = method === "addLinearPoint" ? "LinearSpline" : "TangentialSpline";
                         
-                        let startData = extractPose2d(startArg) || poseVars.get(startArg);
-                        let endData = extractPose2d(endArg) || poseVars.get(endArg);
+                        lines.push({
+                            endPoint: {
+                                x: endData.x,
+                                y: endData.y,
+                                heading: type as any,
+                                startDeg: prevPose.deg,
+                                endDeg: endData.deg,
+                                ...(type === "tangential" ? { reverse: false } : {})
+                            } as Point,
+                            controlPoints: [],
+                            color: getRandomColor(),
+                            splineClass: splineClass
+                        });
                         
-                        if (endData) {
-                            if (!startPoint && startData) {
-                                startPoint = {
-                                    x: startData.x,
-                                    y: startData.y,
-                                    heading: "linear",
-                                    startDeg: startData.deg,
-                                    endDeg: startData.deg
-                                };
-                                console.log(`Path Start: (${startPoint.x}, ${startPoint.y}, ${startPoint.startDeg})`);
-                            }
-                            
-                            const headingType = splineClass.toLowerCase().includes("linear") ? "linear" : "tangential";
-                            const prevPoseDeg = lines.length > 0 ? lines[lines.length - 1].endPoint.endDeg : (startPoint?.endDeg ?? 0);
-                            
-                            const controlPoints: {x: number, y: number}[] = [];
-                            for (let i = 1; i < args.length - 1; i++) {
-                                const arg = args[i];
-                                const cpData = extractPose2d(arg) || poseVars.get(arg);
-                                if (cpData) {
-                                    controlPoints.push({ x: cpData.x, y: cpData.y });
-                                }
-                            }
+                        if (activePathVar && pathCtx) {
+                            pathCtx.lastPose = endData;
+                        }
+                        console.log(`Segment Added via ${method}: to (${endData.x}, ${endData.y}, ${endData.deg})`);
+                    }
+                }
+            }
 
-                            console.log(`Spline Added: ${splineClass} to (${endData.x}, ${endData.y}, ${endData.deg}) with ${controlPoints.length} CPs`);
-
+            // D. Classic Spline Constructor Fallback
+            // e.g., splines.add(new LinearSpline(p1, p2))
+            const classicSplineRegex = /new\s+(\w+Spline)\s*\((.*?)\)/gi;
+            while ((m = classicSplineRegex.exec(stmt)) !== null) {
+                const splineClass = m[1];
+                const inner = m[2];
+                const args = splitArgs(inner);
+                
+                if (args.length >= 2) {
+                    const startArg = args[0].trim();
+                    const endArg = args[args.length - 1].trim();
+                    
+                    const startData = extractPose2d(startArg) || poseVars.get(startArg);
+                    const endData = extractPose2d(endArg) || poseVars.get(endArg);
+                    
+                    if (endData) {
+                        if (!startPoint && startData) {
+                            startPoint = {
+                                x: startData.x,
+                                y: startData.y,
+                                heading: "linear",
+                                startDeg: startData.deg,
+                                endDeg: startData.deg
+                            };
+                        }
+                        
+                        const lastLine = lines[lines.length - 1];
+                        const actualStart: {x: number, y: number, deg: number} | null = startData || (lastLine ? { x: lastLine.endPoint.x, y: lastLine.endPoint.y, deg: lastLine.endPoint.endDeg } : null);
+                        if (actualStart) {
+                            const type = splineClass.toLowerCase().includes("linear") ? "linear" : "tangential";
                             lines.push({
                                 endPoint: {
                                     x: endData.x,
                                     y: endData.y,
-                                    heading: headingType as any,
-                                    startDeg: prevPoseDeg,
-                                    endDeg: endData.deg,
-                                    ...(headingType === "tangential" ? { reverse: false } : {})
+                                    heading: type as any,
+                                    startDeg: actualStart.deg,
+                                    endDeg: endData.deg
                                 } as Point,
-                                controlPoints: controlPoints,
+                                controlPoints: [],
                                 color: getRandomColor(),
                                 splineClass: splineClass
                             });
-                        } else {
-                            console.warn(`Could not resolve end pose for spline: ${stmt}`);
+                            console.log(`Segment Added via Constructor: ${splineClass} to (${endData.x}, ${endData.y}, ${endData.deg})`);
                         }
                     }
                 }
             }
         });
 
-    if (lines.length === 0) {
-      console.log("No splines found, checking for Pose2d list fallback...");
-      const posePattern = /new\s+Pose2d\s*\(\s*[-+]?\d+\.?\d*\s*,\s*[-+]?\d+\.?\d*\s*,\s*(?:Math\.toRadians\s*\(\s*[-+]?\d+\.?\d*\s*\)|[-+]?\d+\.?\d*)\s*\)/gi;
-      const allPosesMatch = [...javaCode.matchAll(posePattern)];
-
-      if (allPosesMatch.length >= 2) {
-        const firstPoseData = extractPose2d(allPosesMatch[0][0])!;
-        startPoint = {
-          x: firstPoseData.x,
-          y: firstPoseData.y,
-          heading: "linear",
-          startDeg: firstPoseData.deg,
-          endDeg: firstPoseData.deg
-        };
-
-        for (let i = 1; i < allPosesMatch.length; i++) {
-          const poseData = extractPose2d(allPosesMatch[i][0])!;
-          const prevPoseData = extractPose2d(allPosesMatch[i-1][0])!;
-          lines.push({
-            endPoint: {
-              x: poseData.x,
-              y: poseData.y,
-              heading: "linear",
-              startDeg: prevPoseData.deg,
-              endDeg: poseData.deg
-            },
-            controlPoints: [],
-            color: getRandomColor(),
-            splineClass: "LinearSpline"
-          });
+        // 4. Final Fallback: Pure Poses
+        if (lines.length === 0) {
+            const posePattern = /new\s+Pose2d\s*\(\s*[-+]?(?:\d+\.?\d*)\s*,\s*[-+]?(?:\d+\.?\d*)\s*,\s*(?:Math\.toRadians\s*\(\s*[-+]?(?:\d+\.?\d*)\s*\)|[-+]?(\d+\.?\d*))\s*\)/gi;
+            const allPoses = [...javaCode.matchAll(posePattern)];
+            if (allPoses.length >= 2) {
+                const p0 = extractPose2d(allPoses[0][0])!;
+                startPoint = { x: p0.x, y: p0.y, heading: "linear", startDeg: p0.deg, endDeg: p0.deg };
+                for (let i = 1; i < allPoses.length; i++) {
+                    const p = extractPose2d(allPoses[i][0])!;
+                    lines.push({
+                        endPoint: { x: p.x, y: p.y, heading: "linear", startDeg: startPoint.endDeg, endDeg: p.deg },
+                        controlPoints: [],
+                        color: getRandomColor(),
+                        splineClass: "LinearSpline"
+                    });
+                }
+            }
         }
-      }
-    }
 
-    if (!startPoint || lines.length === 0) {
-        console.warn("Parse failed: No start point or segments found.");
+        if (!startPoint || lines.length === 0) return null;
+        return { startPoint, lines };
+
+    } catch (e) {
+        console.error("GVF Parser Error:", e);
         return null;
     }
-
-    console.log(`Parse success: ${lines.length} segments.`);
-    return { startPoint, lines };
-  } catch (error) {
-    console.error("Error in Variable Tracking Parser:", error);
-    return null;
-  }
 }
 
 
