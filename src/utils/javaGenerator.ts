@@ -1,13 +1,15 @@
 import type { Point, Line } from "../types";
 
-export function generateJavaCode(startPoint: Point, lines: Line[]): string {
-    const startPose = `new Pose2d(${startPoint.x.toFixed(3)}, ${startPoint.y.toFixed(3)}, Math.toRadians(${(startPoint.startDeg ?? 0).toFixed(3)}))`;
-
-    let code = `paths.add(new Path(${startPose})`;
+export function generateJavaCode(startPoint: Point, lines: Line[], format: "add" | "assign" = "add"): string {
+    const formatNum = (n: number) => Number(n.toFixed(3)).toString();
+    const startPose = `new Pose2d(${formatNum(startPoint.x)}, ${formatNum(startPoint.y)}, Math.toRadians(${formatNum(startPoint.startDeg ?? 0)}))`;
+    
+    let code = format === "add" ? `paths.add(new Path(${startPose})` : `path = new Path(${startPose})`;
 
     let currentReversed = false;
     lines.forEach((line) => {
-        const endPose = `new Pose2d(${line.endPoint.x.toFixed(3)}, ${line.endPoint.y.toFixed(3)}, Math.toRadians(${(line.endPoint.heading === "constant" ? (line.endPoint.degrees ?? 0) : (line.endPoint.endDeg ?? 0)).toFixed(3)}))`;
+        const h = line.endPoint.heading === "constant" ? (line.endPoint.degrees ?? 0) : (line.endPoint.endDeg ?? 0);
+        const endPose = `new Pose2d(${formatNum(line.endPoint.x)}, ${formatNum(line.endPoint.y)}, Math.toRadians(${formatNum(h)}))`;
         const method = line.endPoint.heading === "linear" ? "addLinearPoint" : "addPoint";
         
         if (line.endPoint.heading === "tangential") {
@@ -20,7 +22,7 @@ export function generateJavaCode(startPoint: Point, lines: Line[]): string {
         code += `\n                .${method}(${endPose})`;
     });
 
-    code += `\n                .setDecel(true));`;
+    code += format === "add" ? `\n                .setDecel(true));` : `\n                .setDecel(true);`;
 
     return code;
-}   
+}
