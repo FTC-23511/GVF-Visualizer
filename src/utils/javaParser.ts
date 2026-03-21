@@ -136,10 +136,11 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
 
             // B. Path Builder Initialization
             // e.g., path = new Path(startPose) or paths.add(new Path(startPose))
-            const pathMatch = stmt.match(/(?:(?:Path\s+)?(\w+)\s*=\s*|(\w+)\.add\s*\()?\s*new\s+Path\s*\((.*?)\)/i);
-            if (pathMatch) {
-                const varName = pathMatch[1] || pathMatch[2] || "paths";
-                const startArg = pathMatch[2].trim();
+            const pathInitRegex = /(?:(?:Path\s+)?(\w+)\s*=\s*|(\w+)\.add\s*\()?\s*new\s+Path\s*\((.*?)\)/gi;
+            let pMatch;
+            while ((pMatch = pathInitRegex.exec(stmt)) !== null) {
+                const varName = pMatch[1] || pMatch[2] || "paths";
+                const startArg = pMatch[3].trim();
                 const startData = extractPose2d(startArg) || poseVars.get(startArg);
                 
                 if (startData) {
