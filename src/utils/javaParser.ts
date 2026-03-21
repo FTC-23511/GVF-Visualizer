@@ -135,10 +135,10 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
             }
 
             // B. Path Builder Initialization
-            // e.g., path = new Path(startPose)
-            const pathMatch = stmt.match(/(?:Path\s+)?(\w+)\s*=\s*new\s+Path\s*\((.*?)\)/i);
+            // e.g., path = new Path(startPose) or paths.add(new Path(startPose))
+            const pathMatch = stmt.match(/(?:(?:Path\s+)?(\w+)\s*=\s*|(\w+)\.add\s*\()?\s*new\s+Path\s*\((.*?)\)/i);
             if (pathMatch) {
-                const varName = pathMatch[1];
+                const varName = pathMatch[1] || pathMatch[2] || "paths";
                 const startArg = pathMatch[2].trim();
                 const startData = extractPose2d(startArg) || poseVars.get(startArg);
                 
@@ -171,6 +171,10 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
             // Pattern for .addPoint(new Pose2d(...)) or .addPoint(someVar)
             const addPointRegex = /\.(addPoint|addLinearPoint|addTangentialPoint)\s*\((.*?)\)/gi;
             let m;
+            
+            // Per-statement reverse flag
+            const isReversed = stmt.includes(".setReversed(true)");
+
             while ((m = addPointRegex.exec(stmt)) !== null) {
                 const method = m[1];
                 const arg = m[2].trim();
@@ -192,7 +196,7 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
                                 heading: type as any,
                                 startDeg: prevPose.deg,
                                 endDeg: endData.deg,
-                                ...(type === "tangential" ? { reverse: false } : {})
+                                ...(type === "tangential" ? { reverse: isReversed } : {})
                             } as Point,
                             controlPoints: [],
                             color: getRandomColor(),
@@ -202,7 +206,7 @@ export function parseJavaCode(javaCode: string): { startPoint: Point; lines: Lin
                         if (activePathVar && pathCtx) {
                             pathCtx.lastPose = endData;
                         }
-                        console.log(`Segment Added via ${method}: to (${endData.x}, ${endData.y}, ${endData.deg})`);
+                        console.log(`Segment Added via ${method}: to (${endData.x}, ${endData.y}, ${endData.deg}) ${isReversed ? '(Reversed)' : ''}`);
                     }
                 }
             }
