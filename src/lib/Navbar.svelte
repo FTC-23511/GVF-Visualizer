@@ -17,7 +17,7 @@
   export let loadFile: (evt: any) => any;
   export let loadRobot: (evt: any) => any;
 
-  let separateLines = false;
+  let exportFormat: "add" | "assign" = "add";
   export let startPoint: Point;
   export let lines: Line[];
 
@@ -42,7 +42,7 @@
   let exportedCode = "";
 
   async function exportToCode() {
-    exportedCode = generateJavaCode(startPoint, lines);
+    exportedCode = generateJavaCode(startPoint, lines, exportFormat);
     dialogOpen = true;
   }
 
@@ -326,15 +326,31 @@
         <p class="text-sm font-light text-neutral-700 dark:text-neutral-400">
           Here is the generated code for this path:
         </p>
-        <div class="flex items-center gap-2">
-<!--          <label for="separate-lines" class="text-sm font-light text-neutral-700 dark:text-neutral-400">Separate Lines</label>-->
-<!--          <input-->
-<!--                  id="separate-lines"-->
-<!--                  type="checkbox"-->
-<!--                  bind:checked={separateLines}-->
-<!--                  on:change={exportToCode}-->
-<!--                  class="cursor-pointer"-->
-<!--          />-->
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-1.5">
+            <input
+              id="format-add"
+              type="radio"
+              name="exportFormat"
+              value="add"
+              bind:group={exportFormat}
+              on:change={exportToCode}
+              class="cursor-pointer"
+            />
+            <label for="format-add" class="text-xs font-light text-neutral-700 dark:text-neutral-400 cursor-pointer">paths.add</label>
+          </div>
+          <div class="flex items-center gap-1.5 text-neutral-400">
+            <input
+              id="format-assign"
+              type="radio"
+              name="exportFormat"
+              value="assign"
+              bind:group={exportFormat}
+              on:change={exportToCode}
+              class="cursor-pointer"
+            />
+            <label for="format-assign" class="text-xs font-light text-neutral-700 dark:text-neutral-400 cursor-pointer">path = ...</label>
+          </div>
           <button
                   class=""
                   on:click={() => {
