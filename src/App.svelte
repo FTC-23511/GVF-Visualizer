@@ -9,20 +9,21 @@
   import _ from "lodash";
   import type { BasePoint, Point, Line } from "./types";
   import {
-    easeInOutQuad,
     getCurvePoint,
+    getHermitePoint,
+    getPointFromRegistry,
+    transformAngle,
+    shortestRotation,
+    degreesToRadians,
     getMousePos,
     getRandomColor,
     quadraticToCubic,
     radiansToDegrees,
-    shortestRotation,
-    getHermitePoint,
-    degreesToRadians,
-  } from "./utils";
+  } from "./utils/math";
   import { parseJavaCode } from "./utils/javaParser";
   import { generateJavaCode } from "./utils/javaGenerator";
   import hotkeys from 'hotkeys-js';
-  import { darkMode } from "./stores";
+  import { darkMode, splineRegistry, lastImportedInfo } from "./stores";
 
   let two: Two;
   let twoElement: HTMLDivElement;
@@ -252,7 +253,15 @@
         const h1 = degreesToRadians(line.endPoint.startDeg ?? line.endPoint.degrees ?? 90);
         
         for (let i = 1; i <= samples; ++i) {
-          const point = getHermitePoint(i / samples, _startPoint, h0, line.endPoint, h1);
+          const point = getPointFromRegistry(
+            i / samples, 
+            _startPoint, 
+            line.endPoint, 
+            line.splineClass || "TangentialSpline", 
+            $splineRegistry,
+            line.tangentMag,
+            line.reversed
+          );
           const transformedPoint = transformCoordinates(point);
           points.push(new Two.Anchor(x(transformedPoint.x) + (twoElement?.clientWidth ?? 0) / 2, y(transformedPoint.y) + (twoElement?.clientHeight ?? 0) / 2, 0, 0, 0, 0, Two.Commands.line));
         }
@@ -291,19 +300,38 @@
     let linePercent = easeInOutQuad(totalLineProgress - Math.floor(totalLineProgress));
     let _startPoint = currentLineIdx === 0 ? startPoint : lines[currentLineIdx - 1].endPoint;
 
-    let robotInchesXY: BasePoint;
+    let robotInches: any;
     if (currentLine.controlPoints.length > 0) {
-      robotInchesXY = getCurvePoint(linePercent, [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+      const p = getCurvePoint(linePercent, [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+      // Approximate heading for Bezier
+      const p2 = getCurvePoint(Math.min(1, linePercent + 0.01), [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+      const h = Math.atan2(p2.y - p.y, p2.x - p.x);
+      robotInches = { ...p, heading: h };
     } else if (currentLine.endPoint.heading === 'tangential' || (currentLine.splineClass && currentLine.splineClass.toLowerCase().includes('tangential'))) {
-      const h0 = degreesToRadians((_startPoint as Point).endDeg ?? (_startPoint as Point).degrees ?? 90);
-      const h1 = degreesToRadians(currentLine.endPoint.startDeg ?? currentLine.endPoint.degrees ?? 90);
-      robotInchesXY = getHermitePoint(linePercent, _startPoint, h0, currentLine.endPoint, h1);
+      robotInches = getPointFromRegistry(
+        linePercent, 
+        _startPoint, 
+        currentLine.endPoint, 
+        currentLine.splineClass || "TangentialSpline", 
+        $splineRegistry,
+        currentLine.tangentMag,
+        currentLine.reversed
+      );
     } else {
-      robotInchesXY = getCurvePoint(linePercent, [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+      robotInches = getPointFromRegistry(
+        linePercent, 
+        _startPoint, 
+        currentLine.endPoint, 
+        currentLine.splineClass || "LinearSpline", 
+        $splineRegistry,
+        1.0,
+        currentLine.reversed
+      );
     }
 
-    let transformedRobotXY = transformCoordinates(robotInchesXY);
+    let transformedRobotXY = transformCoordinates(robotInches);
     robotXY = { x: x(transformedRobotXY.x) + (twoElement?.clientWidth ?? 0) / 2, y: y(transformedRobotXY.y) + (twoElement?.clientHeight ?? 0) / 2 };
+    robotHeading = radiansToDegrees(robotInches.heading);
 
     switch (currentLine.endPoint.heading) {
       case "linear":
@@ -505,21 +533,29 @@
 
       reader.onload = function (e: ProgressEvent<FileReader>) {
         try {
-          const result = e.target?.result as string;
+          const fileContent = e.target?.result as string;
           
           if (file.name.endsWith(".java")) {
-            const parsed = parseJavaCode(result);
-            if (parsed) {
+            const parsed = parseJavaCode(fileContent);
+            if (parsed && parsed.startPoint && parsed.lines) {
               startPoint = parsed.startPoint;
               lines = parsed.lines;
+            } else if (parsed && parsed.isLibrary) {
+              if (parsed.splineMath && parsed.className) {
+                splineRegistry.update(reg => ({ ...reg, [parsed.className!]: parsed.splineMath }));
+                lastImportedInfo.set(`Registered Spline: ${parsed.className}`);
+                alert(`Successfully registered custom spline math from: ${parsed.className}.java\n\nAny segments using this class name will now use your custom logic!`);
+              } else {
+                alert("It looks like you're uploading a Line/Spline implementation (the math code).\n\nIf you want to see a path, upload code that contains 'new Pose2d(...)' calls!");
+              }
             } else {
-              alert("Failed to parse Java file.");
+              alert("Could not find any path data in that code.\n\nPlease ensure your snippet contains coordinate-based code like:\n'new Pose2d(10, 20, 0)'\n\n(Tip: Check the browser console F12 for more details)");
             }
           } else {
             const jsonObj: {
               startPoint: Point;
               lines: Line[];
-            } = JSON.parse(result);
+            } = JSON.parse(fileContent);
 
             startPoint = jsonObj.startPoint;
             lines = jsonObj.lines;
