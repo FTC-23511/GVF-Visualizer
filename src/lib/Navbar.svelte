@@ -8,7 +8,7 @@
   import codeStyle from "svelte-highlight/styles/androidstudio";
   import { cubicInOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
-  import { darkMode } from "../stores";
+  import { darkMode, splineRegistry, lastImportedInfo } from "../stores";
   import { getRandomColor, titleCase } from "../utils";
   import { parseJavaCode } from "../utils/javaParser";
   import { generateJavaCode } from "../utils/javaGenerator";
@@ -55,21 +55,22 @@
     const code = javaCodeInput.trim();
     if (!code) return;
 
-    // A class is library code if it defines common spline math but no actual coordinates
-    const isSplineClass = /public\s+class\s+\w+Spline\s+extends\s+Spline/i.test(code);
-    const hasTrajectoryData = /new\s+Pose2d\s*\(\s*[-+]?\d+/i.test(code) || code.includes("getPath") || code.includes(".addSegment") || code.includes("followPath") || code.includes(".build") || code.includes("Path");
-    
-    if (isSplineClass && !hasTrajectoryData) {
-      alert("It looks like you're pasting a Line/Spline implementation (the math code).\n\nThe visualizer needs the code that uses these splines with real coordinates (e.g., your Trajectory or OpMode code).\n\nIf you want to see a path, paste code that contains 'new Pose2d(...)' calls!");
-      return;
-    }
-    
     const result = parseJavaCode(code);
-    if (result) {
+    if (result && result.startPoint && result.lines) {
       startPoint = result.startPoint;
       lines = result.lines;
       importDialogOpen = false;
       javaCodeInput = "";
+    } else if (result && result.isLibrary) {
+      if (result.splineMath && result.className) {
+        splineRegistry.update(reg => ({ ...reg, [result.className!]: result.splineMath }));
+        lastImportedInfo.set(`Registered Spline: ${result.className}`);
+        alert(`Successfully registered custom spline math from: ${result.className}.java\n\nAny segments using this class name will now use your custom logic!`);
+        importDialogOpen = false;
+        javaCodeInput = "";
+      } else {
+        alert("It looks like you're pasting a Line/Spline implementation (the math code).\n\nTry pasting your 'TestAuto.java' or something that contains 'new Path(...)'!");
+      }
     } else {
       alert("Could not find any path data in that code.\n\nPlease ensure your snippet contains coordinate-based code like:\n'new Pose2d(10, 20, 0)'\n\n(Tip: Check the browser console F12 for more details)");
     }
@@ -85,7 +86,7 @@
 >
   <div class="flex flex-row justify-start items-center gap-2">
     <div class="font-semibold flex flex-col justify-start items-start">
-      <div>SolversLib Visualizer <span class="text-[10px] opacity-50 font-mono">v1.1</span></div>
+      <div>SolversLib Visualizer <span class="text-[10px] opacity-50 font-mono">v1.4</span></div>
 
     </div>
     <a
