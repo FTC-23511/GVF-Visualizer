@@ -108,16 +108,16 @@ export function getCurvePoint(t: number, points: BasePoint[]): BasePoint {
   return getCurvePoint(t,newpoints);
 }
 
-export function getHermitePoint(t: number, p0: BasePoint, h0: number, p1: BasePoint, h1: number): BasePoint {
+export function getHermitePoint(t: number, p0: any, h0: number, p1: any, h1: number, tangentMag: number = 1.0): any {
   const dx = p1.x - p0.x;
   const dy = p1.y - p0.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const scale = dist * 1.2;
+  const scale = dist * 1.2 * tangentMag;
 
   const v0 = { x: Math.cos(h0) * scale, y: Math.sin(h0) * scale };
   const v1 = { x: Math.cos(h1) * scale, y: Math.sin(h1) * scale };
 
-  // Quintic coefficients for zero acceleration at endpoints
+  // Quintic coefficients
   const c5 = {
     x: p0.x * -6 - v0.x * 3 + p1.x * 6 - v1.x * 3,
     y: p0.y * -6 - v0.y * 3 + p1.y * 6 - v1.y * 3
@@ -139,9 +139,77 @@ export function getHermitePoint(t: number, p0: BasePoint, h0: number, p1: BasePo
   const t4 = t3 * t;
   const t5 = t4 * t;
 
-  return {
+  const pos = {
     x: c5.x * t5 + c4.x * t4 + c3.x * t3 + c2.x * t2 + c1.x * t + c0.x,
     y: c5.y * t5 + c4.y * t4 + c3.y * t3 + c2.y * t2 + c1.y * t + c0.y
   };
+
+  // Calculate velocity (derivative) for heading
+  const vel = {
+    x: 5 * c5.x * t4 + 4 * c4.x * t3 + 3 * c3.x * t2 + 2 * c2.x * t + c1.x,
+    y: 5 * c5.y * t4 + 4 * c4.y * t3 + 3 * c3.y * t2 + 2 * c2.y * t + c1.y
+  };
+
+  return { ...pos, heading: Math.atan2(vel.y, vel.x) };
 }
 
+export function getPointFromRegistry(
+  t: number, 
+  p0: any, 
+  p1: any, 
+  splineClass: string, 
+  registry: Record<string, any>,
+  tangentMag: number = 1.0,
+  reversed: boolean = false
+): any {
+  const customMath = registry[splineClass];
+  let result: any;
+
+  if (customMath && customMath.getPos) {
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const scale = dist * 1.2 * tangentMag;
+    
+    // Heading in radians
+    const h0 = (p0.endDeg !== undefined ? p0.endDeg : 0) * (Math.PI / 180);
+    const h1 = (p1.endDeg !== undefined ? p1.endDeg : 0) * (Math.PI / 180);
+
+    const v0 = { x: Math.cos(h0) * scale, y: Math.sin(h0) * scale };
+    const v1 = { x: Math.cos(h1) * scale, y: Math.sin(h1) * scale };
+
+    try {
+      const pos = customMath.getPos(t, p0, p1, v0, v1);
+      // For custom math, we approximate heading via a small delta
+      const deltaT = 1e-3;
+      const pos2 = customMath.getPos(Math.min(1, t + deltaT), p0, p1, v0, v1);
+      const heading = (t >= 1) ? Math.atan2(pos.y - p0.y, pos.x - p0.x) : Math.atan2(pos2.y - pos.y, pos2.x - pos.x);
+      result = { ...pos, heading };
+    } catch (e) {
+      console.error(`Error in custom spline math for ${splineClass}:`, e);
+      result = getHermitePoint(t, p0, h0, p1, h1, tangentMag);
+    }
+  } else if (splineClass.toLowerCase().includes("linear")) {
+    const pos = {
+      x: p0.x + t * (p1.x - p0.x),
+      y: p0.y + t * (p1.y - p0.y)
+    };
+    // Linear interpolation for heading
+    const h0 = (p0.endDeg !== undefined ? p0.endDeg : 90);
+    const h1 = (p1.endDeg !== undefined ? p1.endDeg : 90);
+    const headingDeg = shortestRotation(h0, h1, t);
+    result = { ...pos, heading: degreesToRadians(headingDeg) };
+  } else {
+    // Default to hardcoded Hermite
+    const h0 = (p0.endDeg !== undefined ? p0.endDeg : 0) * (Math.PI / 180);
+    const h1 = (p1.endDeg !== undefined ? p1.endDeg : 0) * (Math.PI / 180);
+    result = getHermitePoint(t, p0, h0, p1, h1, tangentMag);
+  }
+
+  // Handle reversed flag
+  if (reversed) {
+    result.heading = (result.heading + Math.PI) % (2 * Math.PI);
+  }
+
+  return result;
+}
