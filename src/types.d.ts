@@ -35,4 +35,6 @@ export interface Line {
   controlPoints: ControlPoint[];
   color: string;
   splineClass?: string;
+  tangentMag?: number;
+  reversed?: boolean;
 }
